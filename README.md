@@ -1,40 +1,37 @@
-- 快速入门
-- 路由系统
-- 请求与响应
-- Session 会话
-- 模板渲染
-- 静态文件
-- 错误处理
-- 部署运行
-- 常见问题
-
----
-
 # 📘 foxwebsite Web 框架官方文档  
 > 一个轻量级、异步、Flask 风格的 Python Web 框架 —— 由中学生独立开发并持续维护 ❤️  
-> 项目邮箱：sbox520@163.com
+> 项目邮箱：sbox520@163.com  
+
+*(Foxwebsite Official Documentation)*  
+> A lightweight, asynchronous, Flask-style Python web framework — independently developed and maintained by a high school student ❤️  
+> Contact: sbox520@163.com  
 
 ---
 
-## ✅ 1. 安装与快速启动
+## ✅ 1. 安装与快速启动  
+### Installation & Quick Start
 
-### 安装依赖
+### 安装依赖  
+Install Dependencies
 
 ```bash
 pip install uvicorn
 ```
 
-（可选）如需使用 Jinja2 模板引擎：
+（可选）如需使用 Jinja2 模板引擎(虽然是可选，但我还是推荐您使用)：  
+*(Optional) If you want to use the Jinja2 template engine:*
 
 ```bash
 pip install jinja2
 ```
 
-> foxwebsite 自带 `string.Template` 引擎，不装 Jinja2 也能用基础模板功能。
+> foxwebsite 自带 `string.Template` 引擎，不装 Jinja2 也能用基础模板功能。  
+> *(Foxwebsite comes with built-in `string.Template` engine; basic templating works even without Jinja2.)*
 
 ---
 
-### 创建第一个应用
+### 创建第一个应用  
+Create Your First Application
 
 新建 `app.py`：
 
@@ -56,19 +53,23 @@ if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8000)
 ```
 
-运行：
+运行：  
+Run:
 
 ```bash
 python app.py
 ```
 
-访问 http://127.0.0.1:8000 看效果！
+访问 http://127.0.0.1:8000 查看效果！  
+*(Visit http://127.0.0.1:8000 to see the result!)*
 
 ---
 
-## 🧭 2. 路由系统
+## 🧭 2. 路由系统  
+### Routing System
 
-### 基础路由
+### 基础路由  
+Basic Routes
 
 ```python
 @app.route("/about")
@@ -76,7 +77,8 @@ def about(request):
     return "About Page"
 ```
 
-支持多个方法：
+支持多个 HTTP 方法：  
+Support multiple HTTP methods:
 
 ```python
 @app.route("/submit", methods=["GET", "POST"])
@@ -86,7 +88,8 @@ def submit(request):
     return "<form method='post'><button>Submit</button></form>"
 ```
 
-快捷装饰器：
+快捷装饰器（`@app.get`, `@app.post` 等）：  
+Shortcut decorators (`@app.get`, `@app.post`, etc.):
 
 ```python
 @app.get("/info")
@@ -94,350 +97,279 @@ def get_info(request):
     return "This is GET only"
 
 @app.post("/login")
-async def login(request):  # 支持 async 函数
-    data = await request.json()
-    return {"status": "ok", "user": data.get("username")}
+async def login(request):  # 支持异步函数  
+    data = await request.json()  # 异步读取 JSON 数据  
+    return {"message": "Login received", "data": data}
+
+# (Supports async functions)  
+# (Asynchronously read JSON data)
+```
+
+路径参数支持类型转换（如 `{id:int}`）：  
+Path parameters support type conversion (e.g., `{id:int}`):
+
+```python
+@app.route("/post/{post_id:int}")
+def view_post(request):
+    post_id = request.params["post_id"]
+    return f"<h3>Viewing post #{post_id}</h3>"
 ```
 
 ---
 
-### 动态路由参数
+## 📥📤 3. 请求与响应  
+### Request & Response
 
-使用 `{参数名}` 占位：
+### 请求对象（Request）  
+Request Object
 
-```python
-@app.route("/article/{id}")
-def article(request):
-    article_id = request.params["id"]  # ← 从路径提取
-    return f"Article ID: {article_id}"
-```
+每个处理函数接收一个 `request` 对象，包含以下属性：  
+Each handler receives a `request` object with the following attributes:
 
-访问 `/article/123` → `request.params = {"id": "123"}`
+- `request.method` — 请求方法（GET、POST 等）  
+  *(HTTP method: GET, POST, etc.)*
+- `request.path` — 请求路径  
+  *(Requested path)*
+- `request.query` — 查询参数字典（如 `?name=Bob` → `{"name": "Bob"}`）  
+  *(Query parameters as dict)*
+- `request.params` — 路径参数（如 `/user/{name}` → `{"name": "Alice"}`）  
+  *(Path parameters)*
+- `request.headers` — 请求头字典  
+  *(Request headers as dict)*
+- `request.body` — 原始请求体（bytes）  
+  *(Raw request body in bytes)*
+- `await request.json()` — 异步解析 JSON 数据  
+  *(Parse JSON body asynchronously)*
+- `await request.form()` — 异步解析表单数据  
+  *(Parse form data asynchronously)*
 
-> 注意：目前只支持单层路径参数，不支持正则自定义（如 `\d+`），但你可以手动在函数内校验类型。
-
----
-
-### 反向路由：`url_for`
-
-注册时自动记录路由，可用 `url_for` 生成 URL：
-
-```python
-@app.route("/user/{name}", methods=["GET"])
-def profile(request):
-    ...
-
-# 在其他 handler 中：
-redirect_url = app.url_for("GET:/user/{name}", name="Alice")
-# 返回 "/user/Alice"
-```
-
-⚠️ 注意：endpoint 格式是 `"METHOD:path"`，区分大小写！
-
----
-
-## 📥 3. 请求对象 `Request`
-
-每个 handler 接收一个 `request` 参数，包含：
-
-| 属性/方法           | 说明 |
-|---------------------|------|
-| `request.method`    | HTTP 方法（GET/POST...） |
-| `request.path`      | 请求路径 |
-| `request.query_params` | 查询参数字典（如 `?a=1&b=2`） |
-| `request.cookies`   | Cookie 字典 |
-| `await request.body()` | 原始请求体（bytes） |
-| `await request.json()` | 解析 JSON 请求体（返回 dict） |
-| `request.params`    | 动态路由参数（如 `{name}`） |
-
-示例：
+示例：  
+Example:
 
 ```python
-@app.route("/search")
-def search(request):
-    q = request.query_params.get("q", [""])[0]  # query_params 是列表值
-    return f"You searched: {q}"
-
 @app.post("/api/data")
-async def api_data(request):
-    data = await request.json()
-    return {"received": data}
+async def handle_data(request):
+    json_data = await request.json()
+    name = json_data.get("name")
+    return {"hello": name}
 ```
 
----
+### 响应（Response）  
+Response
 
-## 🍪 4. 会话管理（Session）
+支持多种返回类型：  
+Supports multiple return types:
 
-foxwebsite 自动处理带签名的安全 Session。
-
-### 读写 Session
+- 字符串 → 返回 HTML 文本  
+  *(String → returns HTML text)*
+- 字典 → 自动序列化为 JSON，设置 `Content-Type: application/json`  
+  *(Dict → auto-serialized to JSON with proper header)*
+- `Response` 对象 → 自定义状态码、头、内容类型等  
+  *(Response object → custom status, headers, content-type, etc.)*
 
 ```python
-@app.route("/login", methods=["POST"])
-async def login(request):
-    data = await request.json()
-    # 登录成功，保存到 session
-    request.session["user_id"] = 123
-    request.session["username"] = data["username"]
-    return {"message": "Login success"}
+from foxwebsite import Response
 
-@app.route("/me")
-def me(request):
-    username = request.session.get("username", "Guest")
-    return f"Hello, {username}!"
-
-@app.route("/logout")
-def logout(request):
-    # 清空 session 并删除 cookie
-    request.clear_session()  # ← 推荐用法
-    return "Logged out"
+@app.get("/custom")
+def custom_response(request):
+    return Response(
+        body="<h1>Custom!</h1>",
+        status=201,
+        headers={"X-Frame-Options": "DENY"},
+        content_type="text/html"
+    )
 ```
-
-> 所有对 `request.session` 的修改，在响应时会自动序列化 + 签名 + 设置 Cookie。
 
 ---
 
-### Session 安全机制
+## 🔐 4. Session 会话  
+### Session Management
 
-- 使用 HMAC-SHA256 签名，防止篡改。
-- Cookie 名默认为 `micropy_session`，可通过 `app.session_cookie_name` 修改。
-- 必须设置 `secret_key`，否则签名无意义！
+启用 Session 需在创建应用时传入 `secret_key`：  
+Enable sessions by providing a `secret_key` when creating the app:
 
 ```python
-app = create_app(secret_key="your-very-long-random-secret-string!")
+app = create_app(secret_key="your-super-secret-key-here")
 ```
 
-> 生产环境请勿使用默认 `"dev-secret"`！
+在路由中使用 session：  
+Use session in routes:
+
+```python
+@app.get("/set")
+def set_session(request):
+    request.session["user"] = "Alice"
+    return "Session set!"
+
+@app.get("/get")
+def get_session(request):
+    user = request.session.get("user", "Guest")
+    return f"Hello, {user}"
+```
+
+Session 基于签名 Cookie 实现，数据存储在客户端。  
+*(Sessions are cookie-based and signed; data is stored on the client side.)*
 
 ---
 
-## 🖼️ 5. 模板渲染
+## 🎨 5. 模板渲染  
+### Template Rendering
 
-默认模板目录：`./templates`
+支持两种模板引擎：  
+Supports two template engines:
 
-### 基础用法
+1. 内置：`string.Template`（无需额外依赖）  
+   *(Built-in: `string.Template` — no extra dependencies)*
+2. 可选：Jinja2（功能更强大）  
+   *(Optional: Jinja2 — more powerful features)*
 
-创建 `templates/index.html`：
+### 使用内置模板（string.Template）  
+Using Built-in Template (`string.Template`)
+
+```python
+@app.get("/hello/{name}")
+def hello(request):
+    name = request.params["name"]
+    return app.render_string("Hello, $name!", name=name)
+```
+
+### 使用 Jinja2 模板  
+Using Jinja2 Templates
+
+确保已安装 Jinja2，并将模板文件放在 `templates/` 目录下。  
+Ensure Jinja2 is installed and templates are in the `templates/` folder.
+
+```python
+@app.get("/profile/{name}")
+def profile(request):
+    name = request.params["name"]
+    return app.render_template("profile.html", name=name, age=16)
+```
+
+`templates/profile.html` 示例：  
+Example `templates/profile.html`:
 
 ```html
-<!DOCTYPE html>
-<html>
-<head><title>Welcome</title></head>
-<body>
-  <h1>Hello, $name!</h1>
-</body>
-</html>
+<h1>Hello, {{ name }}!</h1>
+<p>You are {{ age }} years old.</p>
 ```
 
-在 handler 中渲染：
+---
+
+## 🖼️ 6. 静态文件  
+### Static Files
+
+自动提供 `static/` 目录下的文件（如 CSS、JS、图片）。  
+Serves files from the `static/` directory (CSS, JS, images, etc.).
+
+例如：  
+For example:
+
+- 文件路径：`static/style.css`  
+  *(File path: `static/style.css`)*
+- 可通过 URL 访问：`http://localhost:8000/static/style.css`  
+  *(Accessible via URL: `http://localhost:8000/static/style.css`)*
+
+可通过 `static_dir` 参数自定义目录：  
+Customize directory via `static_dir`:
 
 ```python
-@app.route("/")
-def home(request):
-    return app.render_template("index.html", name="Alice")
+app = create_app(secret_key="...", static_dir="public")
 ```
-
-> 默认使用 Python 内置 `string.Template`，语法简单：`$变量名` 或 `${变量名}`
 
 ---
 
-### 使用 Jinja2（推荐）
+## ❌ 7. 错误处理  
+### Error Handling
 
-安装后自动启用：
-
-```bash
-pip install jinja2
-```
-
-模板语法更强大：
-
-```html
-<!-- templates/profile.html -->
-<h1>Welcome, {{ username }}!</h1>
-{% if age >= 18 %}
-  <p>成年人</p>
-{% else %}
-  <p>未成年人</p>
-{% endif %}
-```
-
-Python 代码无需改动：
+使用 `@app.errorhandler` 注册错误处理器：  
+Use `@app.errorhandler` to register error handlers:
 
 ```python
-return app.render_template("profile.html", username="Bob", age=17)
-```
-
----
-
-### 自动模板功能（懒人福利✨）
-
-如果 handler **没有返回值**（或返回空字符串），框架会自动查找模板：
-
-```python
-@app.route("/about")
-def about(request):
-    pass  # 不返回任何内容
-```
-
-→ 框架自动寻找 `templates/about.html`
-
-→ 如果访问 `/`，则找 `templates/index.html`
-
-非常适合纯静态页面！
-
----
-
-## 📁 6. 静态文件服务
-
-默认静态文件路径前缀：`/static`
-
-放置你的 CSS/JS/图片到项目根目录下的 `./static` 文件夹：
-
-```
-your-project/
-├── static/
-│   ├── style.css
-│   └── logo.png
-├── templates/
-└── app.py
-```
-
-访问：
-
-- `http://localhost:8000/static/style.css`
-- `http://localhost:8000/static/logo.png`
-
-框架自动根据扩展名设置正确的 `Content-Type`。
-
----
-
-## ❌ 7. 错误处理
-
-### 自动 500 页面
-
-程序出错时，控制台会打印完整 traceback，浏览器显示：
-
-```html
-<h1>500 Internal Server Error</h1>
-<pre>错误信息...</pre>
-```
-
-方便调试！
-
----
-
-### 自定义 404
-
-未匹配路由时，默认返回：
-
-```html
-<h1>404 The route does not exist.</h1>
-```
-
-你也可以注册一个万能兜底路由：
-
-```python
-@app.route("/{path:path}")  # ← 注意：此功能当前未实现，需手动加到最后
+@app.errorhandler(404)
 def not_found(request):
-    return "Custom 404 page", 404
+    return "<h1>Page Not Found 😢</h1>", 404
+
+@app.errorhandler(500)
+def server_error(request):
+    return "<h1>Server Error 🛠️</h1>", 500
 ```
 
-> ⚠️ 当前版本不支持 `{path:path}` 通配符，你可以把“兜底路由”放在所有路由最后手动匹配。
-
----
-
-## 🚀 8. 运行与部署
-
-### 开发运行
+也可处理自定义异常：  
+Can also handle custom exceptions:
 
 ```python
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000)
-```
+class UnauthorizedError(Exception):
+    pass
 
-启动后访问 http://127.0.0.1:8000
+@app.errorhandler(UnauthorizedError)
+def handle_unauthorized(request, exception):
+    return "Access denied!", 401
+```
 
 ---
 
-### 生产部署（使用 Uvicorn）
+## 🚀 8. 部署运行  
+### Deployment
+
+开发期间使用内置 `app.run()`：  
+During development, use built-in `app.run()`:
+
+```python
+app.run(host="127.0.0.1", port=8000)
+```
+
+生产环境推荐使用 Uvicorn 托管 ASGI 应用：  
+In production, run with Uvicorn as ASGI app:
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn app:app
 ```
 
-> `app:app` 表示 `app.py` 文件中的 `app` 对象。
+支持 Gunicorn + Uvicorn 多进程部署：  
+Supports Gunicorn + Uvicorn for multi-process deployment:
 
-建议配合 Nginx + Supervisor 使用。
-
----
-
-## ❓ 9. 常见问题（FAQ）
-
-### Q1: 为什么不能像 Flask 一样直接用 `from micropy import request, session`？
-
-A: 因为 foxwebsite 是异步并发框架，全局变量会被多个请求互相覆盖。我们计划在下一版通过 `contextvars` 实现上下文安全的全局代理。目前请直接使用 handler 的 `request` 参数。
-
----
-
-### Q2: 如何设置自定义状态码或响应头？
-
-A: 目前版本暂不支持直接返回元组 `(content, status_code)`，但你可以：
-
-```python
-# 临时方案：手动 send
-async def my_handler(request):
-    await send_json(request.scope['send'], {"error": "Not Found"}, 404)
-    return  # 必须 return 阻止后续处理
-```
-
-或等待未来版本支持 `Response` 类。
-
----
-
-### Q3: Session 存储在哪里？支持 Redis 吗？
-
-A: 当前 Session 存储在客户端 Cookie 中（加密签名），无服务器存储。优点：无状态、易扩展；缺点：容量有限（约 4KB）、不适合存敏感数据。未来可插件化支持服务端存储（如 Redis）。
-
----
-
-### Q4: 支持 WebSocket 或上传文件吗？
-
-A: 当前版本专注 HTTP。WebSocket 和 multipart/form-data 文件上传是未来重要功能，欢迎提交需求或 PR！
-
----
-
-## 📬 10. 联系与贡献
-
-本项目由一名初中生发起，高中持续维护。欢迎交流、提问、贡献代码！
-
-📧 邮箱：sbox520@163.com  
-🌟 如果你喜欢这个项目，请告诉你的朋友，或在 GitHub 上点亮星星！
-
----
-
-## 🛠️ 附录：项目结构建议
-
-```
-my-micropy-app/
-├── app.py                  # 主程序
-├── templates/              # HTML 模板
-│   ├── index.html
-│   └── user.html
-├── static/                 # 静态资源
-│   ├── style.css
-│   └── script.js
-└── requirements.txt        # 依赖
-```
-
-`requirements.txt` 示例：
-
-```
-uvicorn
-jinja2  # 可选
+```bash
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker app:app
 ```
 
 ---
 
-—— 致敬每一位热爱代码的少年
+## ❓ 9. 常见问题  
+### Frequently Asked Questions
 
---- 
+**Q: foxwebsite 是同步还是异步框架？**  
+Is foxwebsite synchronous or asynchronous?
+
+> A: 完全异步（基于 `async/await`），支持同步和异步混合编写路由。  
+> *(Fully asynchronous based on `async/await`, supports both sync and async route handlers.)*
+
+**Q: 是否兼容 WSGI？**  
+Is it compatible with WSGI?
+
+> A: 不兼容。foxwebsite 是 ASGI 框架，需使用 Uvicorn、Hypercorn 等 ASGI 服务器。  
+> *(No. Foxwebsite is an ASGI framework; requires ASGI servers like Uvicorn or Hypercorn.)*
+
+**Q: 能否连接数据库？**  
+Can I connect to a database?
+
+> A: 可以！推荐搭配 `aiomysql`、`asyncpg` 或 `Tortoise ORM` 使用异步数据库。  
+> *(Yes! Recommended with async DB libraries like `aiomysql`, `asyncpg`, or `Tortoise ORM`.)*
+
+**Q: 模板必须用 Jinja2 吗？**  
+Do I have to use Jinja2 for templates?
+
+> A: 不是必须的。内置 `string.Template` 可满足简单需求，Jinja2 用于复杂逻辑。  
+> *(No. Built-in `string.Template` suffices for simple cases; Jinja2 for complex logic.)*
+
+**Q: 如何测试？**  
+How to test?
+
+> A: 可使用 `requests` 或 `httpx` 发起测试请求，未来将提供测试客户端。  
+> *(Use `requests` or `httpx` to send test requests; a test client will be provided in the future.)*
+
+---
+
+> 🌱 正在成长中的框架，欢迎提交 Issue 或 PR！  
+> *(A growing framework — issues and PRs are welcome!)*  
+> GitHub: [https://github.com/shunianssy/foxwebsite](https://github.com/shunianssy/foxwebsite)
