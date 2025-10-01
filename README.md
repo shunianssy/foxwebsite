@@ -1,5 +1,5 @@
 # 📘 foxwebsite Web 框架官方文档  
-> 一个轻量级、异步、Flask 风格的 Python Web 框架 —— 由中学生独立开发并持续维护 ❤️
+> 一个轻量级、异步、Flask 风格的 Python Web 框架 —— 由中学生独立开发并持续维护 ❤️  
 > 你可以赞助我[ifdian.net/a/shunian](https://www.ifdian.net/a/shunian)  
 > 项目邮箱：sbox520@163.com  
 
@@ -374,4 +374,5 @@ How to test?
 > 🌱 正在成长中的框架，欢迎提交 Issue 或 PR！  
 > *(A growing framework — issues and PRs are welcome!)*  
 > GitHub: [https://github.com/shunianssy/foxwebsite](https://github.com/shunianssy/foxwebsite)
+
 
