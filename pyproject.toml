@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foxwebsite"
+version = "0.1.1"
+description = "A sample Python package"
+readme = "README.md"
+authors = [{name = "shunianssy", email = "sbox520@163.com"}]
+license = {text = "MPL-2.0"}
+classifiers = [
+    'License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)',
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "requests>=2.25.0",
+]
+requires-python = ">=3.8"
+
+[project.urls]
+Homepage = "https://github.com/shunianssy/foxwebsite"
+Repository = "https://github.com/shunianssy/foxwebsite.git"
+
+[tool.setuptools.packages.find]
+where = ["."]
