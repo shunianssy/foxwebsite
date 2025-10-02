@@ -8,12 +8,17 @@ import traceback
 from typing import Callable, Dict, Tuple, Optional, Any, List
 from urllib.parse import parse_qs
 from string import Template
+from contextvars import ContextVar
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound, TemplateSyntaxError
+import uvicorn
 
-try:
-    import jinja2
-    JINJA_AVAILABLE = True
-except ImportError:
-    JINJA_AVAILABLE = False
+# ======================
+# 上下文变量
+# ======================
+_request_ctx = ContextVar("request", default=None)
+_session_ctx = ContextVar("session", default=None)
+_app_ctx = ContextVar("app", default=None)
 
 # ======================
 # 工具函数
@@ -52,6 +57,7 @@ class Request:
         self.receive = receive
         self._cookies = None
         self.params = {}  # 路径参数
+        self._response_headers = []
 
     @property
     def cookies(self):
@@ -78,19 +84,15 @@ class Request:
         return self._body
 
     def clear_session(self):
-        """Flask 风格：request.session.clear() 并自动清除 cookie"""
+        """清除 session 并设置删除 cookie 的响应头"""
         if hasattr(self, "session") and isinstance(self.session, dict):
             self.session.clear()
-        # 通知框架发送删除 cookie 的 header
-        if not hasattr(self, "_response_headers"):
-            self._response_headers = []
         cookie_header = f"{self.app.session_cookie_name}=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly"
         self._response_headers.append((b"set-cookie", cookie_header.encode()))
 
     async def json(self):
         body = await self.body()
         return json.loads(body.decode()) if body else None
-
 
 # ======================
 # 响应函数
@@ -123,7 +125,6 @@ async def serve_file(send, file_path: str, content_type: str = "text/html"):
     else:
         await send_response(send, 404, "File not found")
 
-
 # ======================
 # MicroPy 核心
 # ======================
@@ -134,23 +135,68 @@ class MicroPy:
         self.static_url_path = static_url_path
         self.secret_key = secret_key
         self.session_cookie_name = "micropy_session"
+        self.session_serializer = URLSafeTimedSerializer(secret_key, salt="session")
+        self.app = self  # 兼容 Flask 风格
         os.makedirs(template_folder, exist_ok=True)
 
-        # 路由系统：支持静态和动态
+        # 路由系统
         self.routes: List[Tuple[re.Pattern, str, Callable]] = []
         self.route_map: Dict[str, str] = {}  # 用于 url_for
 
-        # Jinja2 支持
-        if JINJA_AVAILABLE:
-            self.jinja_env = jinja2.Environment(
-                loader=jinja2.FileSystemLoader(template_folder),
-                autoescape=True
-            )
-        else:
-            self.jinja_env = None
+        # 模板系统
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(template_folder),
+            autoescape=True,
+            extensions=["jinja2.ext.loopcontrols"]
+        )
+
+        # 配置系统
+        # 在 MicroPy 中添加配置
+        self.config = {
+            "SECRET_KEY": secret_key,
+            "SESSION_COOKIE_NAME": "micropy_session",
+            "SESSION_COOKIE_SECURE": False,  # 生产环境设为 True
+            "SESSION_COOKIE_HTTPONLY": True,  # 防止 XSS
+            "SESSION_COOKIE_SAMESITE": "Lax",  # 防 CSRF
+            "SESSION_PERMANENT": False,
+            "SESSION_EXPIRE_AT_BROWSER_CLOSE": True,
+            "DEBUG": False,
+            "TESTING": False,
+        }
+
+        # 中间件
+        self.before_request_funcs = []
+        self.after_request_funcs = []
+        self.errorhandler_funcs = {}
+
+        # 全局上下文
+        self._app_context = None
+
+    def config_from_object(self, obj):
+        """从对象加载配置"""
+        for key in dir(obj):
+            if key.isupper():
+                self.config[key] = getattr(obj, key)
+
+    def config_from_pyfile(self, filename):
+        """从 Python 文件加载配置"""
+        with open(filename, "r") as f:
+            exec(f.read(), self.config)
+
+    def config_from_envvar(self, var_name):
+        """从环境变量加载配置"""
+        value = os.getenv(var_name)
+        if value:
+            self.config.update(json.loads(value))
+
+    def config_from_prefixed_env(self, prefix):
+        """从前缀环境变量加载配置"""
+        for key, value in os.environ.items():
+            if key.startswith(prefix + "_"):
+                subkey = key[len(prefix) + 1:].lower()
+                self.config[subkey] = value
 
     def route(self, path: str, methods=("GET",)):
-        # 转换 {name} 为正则
         pattern_str = "^" + re.escape(path) + "$"
         pattern_str = re.sub(r"\\{([^}/]+)\\}", r"(?P<\1>[^/]+)", pattern_str)
         pattern = re.compile(pattern_str)
@@ -158,7 +204,6 @@ class MicroPy:
         def decorator(handler: Callable):
             for method in methods:
                 self.routes.append((pattern, method.upper(), handler))
-                # 注册到 url_for 映射
                 self.route_map[f"{method.upper()}:{path}"] = path
             return handler
         return decorator
@@ -169,73 +214,73 @@ class MicroPy:
     def post(self, path: str):
         return self.route(path, methods=["POST"])
 
-    # ======================
-    # 反向路由：url_for
-    # ======================
     def url_for(self, endpoint: str, **values) -> str:
-        """endpoint: 'GET:/user/{name}'"""
         if endpoint in self.route_map:
             path = self.route_map[endpoint]
             for k, v in values.items():
-                path = re.sub(rf"{{\s*{k}\s*}}", str(v), path)
+                path = path.replace(f"{{{k}}}", str(v))
             return path
         return "/"
 
-    # ======================
-    # 模板渲染（Jinja2 优先）
-    # ======================
     def render_template(self, filename: str, **context) -> str:
-        filepath = os.path.join(self.template_folder, filename)
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"Template {filename} not found.")
-
-        if self.jinja_env:
+        try:
             template = self.jinja_env.get_template(filename)
             return template.render(**context)
-        else:
-            with open(filepath, "r", encoding="utf-8") as f:
-                content = f.read()
-            template = Template(content)
-            return template.substitute(**context)
+        except TemplateNotFound:
+            raise FileNotFoundError(f"Template {filename} not found.")
+        except TemplateSyntaxError as e:
+            raise RuntimeError(f"Template syntax error in {filename}: {e}")
 
-    # ======================
-    # 构建带 Session Cookie 的响应头
-    # ======================
+    def before_request(self, func):
+        self.before_request_funcs.append(func)
+        return func
+
+    def after_request(self, func):
+        self.after_request_funcs.append(func)
+        return func
+
+    def errorhandler(self, code_or_exception):
+        def decorator(func):
+            self.errorhandler_funcs[code_or_exception] = func
+            return func
+        return decorator
+
+    def abort(self, code: int):
+        """主动抛出错误，触发 errorhandler"""
+        raise RuntimeError(f"Abort with status code {code}")
+
+    def clear_session(self, request):
+        request.session.clear()
+        cookie_header = f"{self.session_cookie_name}=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly"
+        request._response_headers.append((b"set-cookie", cookie_header.encode()))
+
     def _build_headers_with_session(self, request, content_type: str = "text/html") -> List[Tuple[bytes, bytes]]:
         headers = [
             (b"content-type", content_type.encode()),
         ]
 
-        # 如果有自定义响应头（比如 clear_session 设置的），合并进来
         if hasattr(request, "_response_headers"):
             headers.extend(request._response_headers)
 
-        # 如果 session 非空，设置新 cookie
         if hasattr(request, "session") and isinstance(request.session, dict) and request.session:
-            session_data = serialize_session(request.session, self.secret_key)
-            cookie_header = f"{self.session_cookie_name}={session_data}; Path=/; HttpOnly"
-            headers.append((b"set-cookie", cookie_header.encode()))
+            try:
+                session_data = serialize_session(request.session, self.secret_key)
+                cookie_header = f"{self.session_cookie_name}={session_data}; Path=/; HttpOnly"
+                if self.config["SESSION_COOKIE_SECURE"]:
+                    cookie_header += "; Secure"
+                if self.config["SESSION_COOKIE_SAMESITE"]:
+                    cookie_header += f"; SameSite={self.config['SESSION_COOKIE_SAMESITE']}"
+                if self.config["SESSION_PERMANENT"]:
+                    cookie_header += f"; Max-Age={self.config.get('PERMANENT_SESSION_LIFETIME', 31536000)}"
+                headers.append((b"set-cookie", cookie_header.encode()))
+            except Exception as e:
+                print(f"Session serialization failed: {e}")
 
         return headers
 
-    def clear_session(self, request):
-        """清空 session 并设置删除 cookie 的响应头"""
-        request.session.clear()  # 清空内存中的 session
-        # 设置一个已过期的 cookie，让浏览器删除它
-        cookie_header = f"{self.session_cookie_name}=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly"
-        # 保存到 request，以便在响应时发送
-        if not hasattr(request, "_response_headers"):
-            request._response_headers = []
-        request._response_headers.append((b"set-cookie", cookie_header.encode()))
-
-
-    # ======================
-    # ASGI 协议入口
-    # ======================
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return
-
         request = Request(scope, receive)
         method = request.method
         path = request.path
@@ -244,7 +289,7 @@ class MicroPy:
         cookie = request.cookies.get(self.session_cookie_name)
         session_data = deserialize_session(cookie, self.secret_key)
         request.session = session_data if isinstance(session_data, dict) else {}
-
+        
         # 忽略 favicon.ico
         if path == "/favicon.ico":
             await send_response(send, 204, "", "image/x-icon")
@@ -290,12 +335,25 @@ class MicroPy:
             await send_response(send, 404, "<h1>404 The route does not exist.</h1>")
             return
 
+        # 执行 before_request
+        for func in self.before_request_funcs:
+            try:
+                result = func()
+                if result is not None:
+                    await send_json(send, result, 400)
+                    return
+            except Exception as e:
+                print(f"Before request error: {e}")
+                await send_response(send, 500, f"Before request error: {e}")
+                return
+
         try:
-            # 调用 handler —— 必须接收 request 参数
+            # 调用 handler
             response = await handler(request) if asyncio.iscoroutinefunction(handler) else handler(request)
 
-            # === 自动模板返回 ===
+            # === 处理响应 ===
             if response is None or response == "":
+                # 自动渲染模板
                 auto_template = (path.strip("/") or "index") + ".html"
                 auto_path = os.path.join(self.template_folder, auto_template)
                 if os.path.exists(auto_path):
@@ -314,9 +372,28 @@ class MicroPy:
                         "body": content_bytes,
                     })
                     return
+                else:
+                    await send_response(send, 404, "Template not found")
+                    return
 
-            # === 处理响应并自动附加 Session Cookie ===
-            if isinstance(response, dict):
+            # === 处理返回值 ===
+            if isinstance(response, str):
+                # 返回字符串
+                content_bytes = response.encode("utf-8")
+                headers = self._build_headers_with_session(request, "text/html")
+                headers.append((b"content-length", str(len(content_bytes)).encode()))
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": headers,
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": content_bytes,
+                })
+
+            elif isinstance(response, dict):
+                # 返回字典 → JSON
                 content = json.dumps(response, ensure_ascii=False)
                 headers = self._build_headers_with_session(request, "application/json")
                 content_bytes = content.encode("utf-8")
@@ -330,45 +407,86 @@ class MicroPy:
                     "type": "http.response.body",
                     "body": content_bytes,
                 })
-            elif isinstance(response, str):
-                content_bytes = response.encode("utf-8")
-                headers = self._build_headers_with_session(request, "text/html")
-                headers.append((b"content-length", str(len(content_bytes)).encode()))
-                await send({
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": headers,
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": content_bytes,
-                })
+
+            elif isinstance(response, tuple):
+                # 返回 (str, int) 或 (dict, int)
+                if len(response) == 2:
+                    content, status = response
+                    if isinstance(content, str):
+                        content_bytes = content.encode("utf-8")
+                        headers = self._build_headers_with_session(request, "text/html")
+                        headers.append((b"content-length", str(len(content_bytes)).encode()))
+                        await send({
+                            "type": "http.response.start",
+                            "status": status,
+                            "headers": headers,
+                        })
+                        await send({
+                            "type": "http.response.body",
+                            "body": content_bytes,
+                        })
+                    elif isinstance(content, dict):
+                        content = json.dumps(content, ensure_ascii=False)
+                        headers = self._build_headers_with_session(request, "application/json")
+                        content_bytes = content.encode("utf-8")
+                        headers.append((b"content-length", str(len(content_bytes)).encode()))
+                        await send({
+                            "type": "http.response.start",
+                            "status": status,
+                            "headers": headers,
+                        })
+                        await send({
+                            "type": "http.response.body",
+                            "body": content_bytes,
+                        })
+                    else:
+                        # 如果 content 不是 str 或 dict，返回 500
+                        await send_response(send, 500, "Invalid response type")
+                else:
+                    # tuple 长度不为 2，返回 500
+                    await send_response(send, 500, "Invalid response tuple length")
+
             else:
-                content = str(response)
-                content_bytes = content.encode("utf-8")
-                headers = self._build_headers_with_session(request, "text/html")
-                headers.append((b"content-length", str(len(content_bytes)).encode()))
-                await send({
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": headers,
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": content_bytes,
-                })
+                # 其他类型，如 Response 对象
+                await send_response(send, 200, str(response), "text/html")
 
         except Exception as e:
-            # 打印完整错误堆栈到控制台
+            # 打印错误堆栈
             print("\n" + "="*60)
             print("❌ INTERNAL SERVER ERROR")
             print(f"Path: {path}")
             print(f"Method: {method}")
             traceback.print_exc()
             print("="*60 + "\n")
-            # 返回错误页面
-            await send_response(send, 500, f"<h1>500 Internal Server Error</h1><pre>{str(e)}</pre>")
 
+            # 检查 errorhandler
+            error_handler = self.errorhandler_funcs.get(type(e), self.errorhandler_funcs.get(Exception))
+            if error_handler:
+                try:
+                    result = error_handler(e)
+                    if isinstance(result, str):
+                        await send_response(send, 500, result)
+                    elif isinstance(result, dict):
+                        await send_json(send, result, 500)
+                    elif isinstance(result, int):
+                        await send_response(send, result, "text/html")
+                    else:
+                        await send_response(send, 500, "Internal Server Error")
+                except Exception as e2:
+                    print(f"Error in errorhandler: {e2}")
+                    await send_response(send, 500, "Internal Server Error")
+            else:
+                await send_response(send, 500, f"<h1>500 Internal Server Error</h1><pre>{str(e)}</pre>")
+
+        # 执行 after_request
+        for func in self.after_request_funcs:
+            try:
+                result = func()
+                if result is not None:
+                    # 处理返回值
+                    pass
+            except Exception as e:
+                print(f"After request error: {e}")
 
     def run(self, host="127.0.0.1", port=8000):
         try:
@@ -377,9 +495,8 @@ class MicroPy:
             raise ImportError("Uvicorn is required. Install with: pip install uvicorn")
         uvicorn.run(self, host=host, port=port, log_level="info")
 
-
 # ======================
-# 全局变量（Flask 风格）—— 注意：这里只是占位，实际全局 request/session 需在 __init__.py 用 contextvars 实现
+# 全局变量（Flask 风格）
 # ======================
 app = None
 request = None
