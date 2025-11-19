@@ -1,4 +1,4 @@
-# [简体中文](https://github.com/shunianssy/foxwebsite/blob/main/README_Zn.md) [繁体中文](https://github.com/shunianssy/foxwebsite/blob/main/README_ZN_FT.md) [日本語](https://github.com/shunianssy/foxwebsite/blob/main/README_JP.md)
+# [简体中文](https://github.com/shunianssy/foxwebsite/blob/main/README_Zn.md) [日本語](https://github.com/shunianssy/foxwebsite/blob/main/README_JP.md)
 # 📘 foxwebsite Web Framework Official Documentation  
 > A lightweight, asynchronous, Flask-style Python web framework — independently developed and maintained by a high school student ❤️  
 > Support me on: [ifdian.net/a/shunian](https://www.ifdian.net/a/shunian)  
