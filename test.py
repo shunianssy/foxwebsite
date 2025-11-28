@@ -1,4 +1,3 @@
-# 1.py
 from foxwebsite import create_app
 
 app = create_app()
